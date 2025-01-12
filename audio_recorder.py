@@ -1,5 +1,6 @@
 import streamlit as st
-import pyaudio
+import sounddevice as sd
+import scipy.io.wavfile as wav
 import wave
 import speech_recognition as sr
 from datetime import datetime
@@ -18,58 +19,25 @@ class SesKaydedici:
     def __init__(self):
         self.kayit_devam = False
         self.ses_parcalari = []
-        self.p = None
-        self.stream = None
+        self.fs = 44100  # Örnekleme hızı
 
-    def kayit_baslat(self, chunk=1024, ornek_format=pyaudio.paInt16, kanal=1, ornek_hizi=44100):
+    def kayit_baslat(self, sure=10):  # saniye olarak kayıt süresi
         self.kayit_devam = True
         self.ses_parcalari = []
 
-        self.p = pyaudio.PyAudio()
-        varsayilan_mikrofon = self.p.get_default_input_device_info()
-        st.write(f"Kullanılan mikrofon: {varsayilan_mikrofon['name']}")
-
-        self.stream = self.p.open(format=ornek_format,
-                                channels=kanal,
-                                rate=ornek_hizi,
-                                frames_per_buffer=chunk,
-                                input=True)
-
-        def kayit_dongusu():
-            while self.kayit_devam:
-                veri = self.stream.read(chunk)
-                self.ses_parcalari.append(veri)
-
-        self.kayit_thread = threading.Thread(target=kayit_dongusu)
-        self.kayit_thread.start()
+        # Ses kaydını başlat
+        self.ses_parcalari = sd.rec(int(self.fs * sure), samplerate=self.fs, channels=1, dtype='int16')
+        sd.wait()  # Kayıt bitene kadar bekler
 
     def kayit_durdur(self):
         self.kayit_devam = False
-        if self.kayit_thread:
-            self.kayit_thread.join()
-
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-
-        if self.p:
-            self.p.terminate()
-
-        return self.ses_parcalari, 44100  # Default örnek hızı
+        return self.ses_parcalari, self.fs
 
 def ses_kaydet_dosyaya(ses_parcalari, ornek_hizi):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"recordings/recording_{zaman_damgasi}.wav"
 
-    p = pyaudio.PyAudio()
-    wf = wave.open(dosya_adi, 'wb')
-    wf.setnchannels(1)
-    wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-    wf.setframerate(ornek_hizi)
-    wf.writeframes(b''.join(ses_parcalari))
-    wf.close()
-    p.terminate()
-
+    wav.write(dosya_adi, ornek_hizi, ses_parcalari)
     return dosya_adi
 
 def sesi_yaziya_cevir(ses_dosyasi):
@@ -129,7 +97,8 @@ def main():
         if not st.session_state.kayit_durumu:
             if st.button("Kayıt Başlat"):
                 st.session_state.kayit_durumu = True
-                st.session_state.kaydedici.kayit_baslat()
+                sure = st.number_input("Kayıt Süresi (saniye)", min_value=1, max_value=60, value=10)
+                st.session_state.kaydedici.kayit_baslat(sure)
                 st.success("Kayıt başladı!")
 
     with col2:
