@@ -1,11 +1,13 @@
 import streamlit as st
-import pyaudio
-import wave
-import speech_recognition as sr
-from datetime import datetime
+import sounddevice as sd
+from scipy.io.wavfile import write
 import os
 import threading
 import requests
+from datetime import datetime
+import numpy as np
+import wave
+import speech_recognition as sr
 
 def klasor_olustur():
     """Gerekli klasörleri oluştur (eğer yoksa)"""
@@ -18,59 +20,31 @@ class SesKaydedici:
     def __init__(self):
         self.kayit_devam = False
         self.ses_parcalari = []
-        self.p = None
-        self.stream = None
 
-    def kayit_baslat(self, chunk=1024, ornek_format=pyaudio.paInt16, kanal=1, ornek_hizi=44100):
+    def kayit_baslat(self, seconds=5, samplerate=44100):
+        """Kaydı başlat ve ses kaydını depola"""
         self.kayit_devam = True
         self.ses_parcalari = []
+        self.seconds = seconds
+        self.samplerate = samplerate
 
-        self.p = pyaudio.PyAudio()
-        varsayilan_mikrofon = self.p.get_default_input_device_info()
-        st.write(f"Kullanılan mikrofon: {varsayilan_mikrofon['name']}")
-
-        self.stream = self.p.open(format=ornek_format,
-                                channels=kanal,
-                                rate=ornek_hizi,
-                                frames_per_buffer=chunk,
-                                input=True)
-
-        def kayit_dongusu():
-            while self.kayit_devam:
-                veri = self.stream.read(chunk)
-                self.ses_parcalari.append(veri)
-
-        self.kayit_thread = threading.Thread(target=kayit_dongusu)
-        self.kayit_thread.start()
+        # Kaydı başlatıyoruz
+        self.ses_parcalari = sd.rec(int(self.seconds * self.samplerate), samplerate=self.samplerate, channels=1, dtype='int16')
+        sd.wait()  # Kaydın bitmesini bekler
 
     def kayit_durdur(self):
-        self.kayit_devam = False
-        if self.kayit_thread:
-            self.kayit_thread.join()
+        """Kaydı durdur ve döndür"""
+        return self.ses_parcalari, self.samplerate
 
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-
-        if self.p:
-            self.p.terminate()
-
-        return self.ses_parcalari, 44100  # Default örnek hızı
 
 def ses_kaydet_dosyaya(ses_parcalari, ornek_hizi):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"recordings/recording_{zaman_damgasi}.wav"
 
-    p = pyaudio.PyAudio()
-    wf = wave.open(dosya_adi, 'wb')
-    wf.setnchannels(1)
-    wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-    wf.setframerate(ornek_hizi)
-    wf.writeframes(b''.join(ses_parcalari))
-    wf.close()
-    p.terminate()
-
+    write(dosya_adi, ornek_hizi, ses_parcalari)
+    
     return dosya_adi
+
 
 def sesi_yaziya_cevir(ses_dosyasi):
     taniyici = sr.Recognizer()
@@ -86,6 +60,7 @@ def sesi_yaziya_cevir(ses_dosyasi):
     except Exception as e:
         return f"Hata oluştu: {str(e)}"
 
+
 def metni_kaydet(metin):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"transcripts/transcript_{zaman_damgasi}.txt"
@@ -94,19 +69,10 @@ def metni_kaydet(metin):
         f.write(metin)
     return dosya_adi
 
-def metni_webhooka_gonder(webhook_url, metin):
-    """Webhook'a metni gönder"""
-    try:
-        response = requests.post(webhook_url, json={"transcript": metin})
-        if response.status_code == 200:
-            return "Veri başarılı bir şekilde webhook'a gönderildi!"
-        else:
-            return f"Webhook isteği başarısız: {response.status_code} - {response.text}"
-    except Exception as e:
-        return f"Webhook gönderimi sırasında bir hata oluştu: {str(e)}"
 
 def main():
     st.title("Ses Kaydedici ve Yazıya Dönüştürücü")
+    WEBHOOK_URL = st.text_input("Webhook URL'nizi buraya girin:", "https://webhook.site/your-url")
 
     klasor_olustur()
 
@@ -114,23 +80,15 @@ def main():
         st.session_state.kaydedici = SesKaydedici()
         st.session_state.kayit_durumu = False
 
-    # Kullanıcıdan Webhook URL'si alın
-    st.sidebar.title("Ayarlar")
-    webhook_url = st.sidebar.text_input("Webhook URL'si", placeholder="Webhook URL giriniz")
-
-    # Webhook URL'sinin girilip girilmediğini kontrol edin
-    if not webhook_url:
-        st.warning("Lütfen önce geçerli bir Webhook URL'si girin!")
-        return
-
     col1, col2 = st.columns(2)
 
     with col1:
         if not st.session_state.kayit_durumu:
             if st.button("Kayıt Başlat"):
                 st.session_state.kayit_durumu = True
-                st.session_state.kaydedici.kayit_baslat()
-                st.success("Kayıt başladı!")
+                with st.spinner("Kaydınız başlıyor..."):
+                    st.session_state.kaydedici.kayit_baslat()
+                    st.success("Kayıt başladı!")
 
     with col2:
         if st.session_state.kayit_durumu:
@@ -151,11 +109,26 @@ def main():
                     # Metni dosyaya kaydet
                     metin_dosyasi = metni_kaydet(metin)
                     st.success(f"Yazıya dönüştürüldü ve kaydedildi: {metin_dosyasi}")
+                    
+                    # Webhook'a gönder
+                    if WEBHOOK_URL:
+                        st.info("Webhook'a veri gönderiliyor...")
+                        webhook_mesaji = metni_webhooka_gonder(WEBHOOK_URL, metin)
+                        st.write(webhook_mesaji)
+                    else:
+                        st.warning("Webhook URL'i girilmemiş!")
 
-                    # Metni webhook'a gönder
-                    st.info("Webhook'a veri gönderiliyor...")
-                    webhook_mesaji = metni_webhooka_gonder(webhook_url, metin)
-                    st.write(webhook_mesaji)
+# Webhook'a gönderim fonksiyonu
+def metni_webhooka_gonder(webhook_url, metin):
+    try:
+        response = requests.post(webhook_url, json={"transcript": metin})
+        if response.status_code == 200:
+            return "Veri başarılı bir şekilde webhook'a gönderildi!"
+        else:
+            return f"Webhook isteği başarısız: {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"Webhook gönderimi sırasında bir hata oluştu: {str(e)}"
+
 
 if __name__ == "__main__":
     main()
