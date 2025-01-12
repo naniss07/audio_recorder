@@ -4,9 +4,9 @@ requests==2.26.0
 sounddevice==0.4.4
 protobuf==3.20.3
 setuptools==75.8.0
-click==7.1.2
-altair==4.2.2
-pyaudio==0.2.11
+click==8.1.8
+altair==5.5.0
+pyaudio==0.2.14
 
 
 
