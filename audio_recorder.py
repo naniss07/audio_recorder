@@ -81,53 +81,52 @@ def main():
         st.warning("Lütfen önce geçerli bir Webhook URL'si girin!")
         return
     
-    # Create two columns for buttons
+    # Create two columns for buttons (but now we will use the automatic record behavior)
     col1, col2 = st.columns(2)
-    
+
+    # In the first column, just a message to start recording automatically
     with col1:
-        # Show Start button only if not recording
         if not st.session_state.recording:
-            if st.button("Kayıt Başlat", type="primary"):
-                st.session_state.recording = True
-                st.session_state.audio_bytes = None  # Reset previous recordings
-                st.session_state.recording_status = "Kayıt başladı. Ses kaydediliyor..."
-    
+            st.session_state.recording = True
+            st.session_state.audio_bytes = None  # Reset previous recordings
+            st.session_state.recording_status = "Kayıt başladı. Ses kaydediliyor..."
+            
     with col2:
-        # Show Stop button only if recording
+        # Durdur butonu sadece kayıt sırasında aktif olacak
         if st.session_state.recording:
             if st.button("Kayıt Durdur", type="secondary"):
                 st.session_state.recording = False
                 if st.session_state.audio_bytes:
                     with st.spinner("Ses işleniyor..."):
-                        # Save audio to file
+                        # Ses kaydını kaydet
                         audio_file = save_audio(st.session_state.audio_bytes)
                         st.success(f"Ses kaydedildi: {audio_file}")
                         
-                        # Transcribe audio
+                        # Ses kaydını yazıya dönüştür
                         text = transcribe_audio(audio_file)
                         st.write("Yazıya dönüştürülen metin:")
                         st.write(text)
                         
-                        # Save transcript
+                        # Metni dosyaya kaydet
                         transcript_file = save_transcript(text)
                         st.success(f"Yazıya dönüştürüldü ve kaydedildi: {transcript_file}")
                         
-                        # Send to webhook
+                        # Webhook'a gönder
                         st.info("Webhook'a veri gönderiliyor...")
                         webhook_message = send_to_webhook(webhook_url, text)
                         st.write(webhook_message)
                         
-                        # Reset audio bytes
+                        # Ses verilerini sıfırla
                         st.session_state.audio_bytes = None
                         st.session_state.recording_status = "Kaydetme tamamlandı."
     
-    # Hidden audio recorder only starts recording when the user presses "Kayıt Başlat"
+    # Ses kaydını başlat ve otomatik olarak başlatılır
     if st.session_state.recording:
         audio_bytes = audio_recorder(key="hidden_recorder")
         if audio_bytes:
             st.session_state.audio_bytes = audio_bytes
     
-    # Show recording status
+    # Kayıt durumu mesajı
     if st.session_state.recording:
         st.write("🔴 Kayıt yapılıyor...")
         st.write(st.session_state.recording_status)
