@@ -3,71 +3,31 @@ from datetime import datetime
 import os
 import requests
 import speech_recognition as sr
-import sounddevice as sd
-import numpy as np
-import wave
-import threading
-import queue
+from io import BytesIO
+import soundfile as sf
+from audio_recorder_streamlit import audio_recorder
 
 def create_folders():
+    """Create necessary folders if they don't exist"""
     if not os.path.exists("recordings"):
         os.makedirs("recordings")
     if not os.path.exists("transcripts"):
         os.makedirs("transcripts")
 
-class AudioRecorder:
-    def __init__(self):
-        self.audio_queue = queue.Queue()
-        self.recording = False
-        self.sample_rate = 44100
-        self.channels = 1
-        
-    def callback(self, indata, frames, time, status):
-        if status:
-            print(status)
-        if self.recording:
-            self.audio_queue.put(indata.copy())
-    
-    def start_recording(self):
-        self.recording = True
-        self.audio_queue.queue.clear()
-        self.stream = sd.InputStream(
-            channels=self.channels,
-            samplerate=self.sample_rate,
-            callback=self.callback
-        )
-        self.stream.start()
-    
-    def stop_recording(self):
-        self.recording = False
-        self.stream.stop()
-        self.stream.close()
-        
-        # Collect all audio data
-        audio_data = []
-        while not self.audio_queue.empty():
-            audio_data.append(self.audio_queue.get())
-            
-        if not audio_data:
-            return None
-            
-        # Combine all chunks
-        audio_data = np.concatenate(audio_data, axis=0)
-        return audio_data, self.sample_rate
-
-def save_audio(audio_data, sample_rate):
+def save_audio(audio_bytes):
+    """Save audio bytes to a WAV file"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"recordings/recording_{timestamp}.wav"
     
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
+    # Convert audio bytes to WAV format
+    audio_segment = BytesIO(audio_bytes)
+    data, samplerate = sf.read(audio_segment)
+    sf.write(filename, data, samplerate)
     
     return filename
 
 def transcribe_audio(audio_file):
+    """Convert speech to text using Google Speech Recognition"""
     recognizer = sr.Recognizer()
     
     try:
@@ -82,6 +42,7 @@ def transcribe_audio(audio_file):
         return f"Hata oluştu: {str(e)}"
 
 def save_transcript(text):
+    """Save transcript to a file"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"transcripts/transcript_{timestamp}.txt"
     
@@ -90,6 +51,7 @@ def save_transcript(text):
     return filename
 
 def send_to_webhook(webhook_url, text):
+    """Send text to webhook"""
     try:
         response = requests.post(webhook_url, json={"transcript": text})
         if response.status_code == 200:
@@ -104,43 +66,49 @@ def main():
     
     create_folders()
     
-    # Initialize session states
-    if 'recorder' not in st.session_state:
-        st.session_state.recorder = AudioRecorder()
+    # Initialize session states if they don't exist
     if 'recording' not in st.session_state:
         st.session_state.recording = False
+    if 'audio_bytes' not in st.session_state:
+        st.session_state.audio_bytes = None
     
     # Webhook URL input in sidebar
     st.sidebar.title("Ayarlar")
     webhook_url = st.sidebar.text_input("Webhook URL'si", placeholder="Webhook URL giriniz")
     
+    # Check if webhook URL is provided
     if not webhook_url:
         st.warning("Lütfen önce geçerli bir Webhook URL'si girin!")
         return
     
+    # Hidden audio recorder
+    if st.session_state.recording:
+        audio_bytes = audio_recorder(key="hidden_recorder")
+        if audio_bytes:
+            st.session_state.audio_bytes = audio_bytes
+    
+    # Create two columns for buttons
     col1, col2 = st.columns(2)
     
     with col1:
+        # Show Start button only if not recording
         if not st.session_state.recording:
             if st.button("Kayıt Başlat", type="primary"):
                 st.session_state.recording = True
-                st.session_state.recorder.start_recording()
                 st.experimental_rerun()
     
     with col2:
+        # Show Stop button only if recording
         if st.session_state.recording:
             if st.button("Kayıt Durdur", type="secondary"):
                 st.session_state.recording = False
-                result = st.session_state.recorder.stop_recording()
-                
-                if result:
-                    audio_data, sample_rate = result
+                if st.session_state.audio_bytes:
                     with st.spinner("Ses işleniyor..."):
-                        # Save audio
-                        audio_file = save_audio(audio_data, sample_rate)
+                        # Save audio to file
+                        audio_file = save_audio(st.session_state.audio_bytes)
                         st.success(f"Ses kaydedildi: {audio_file}")
                         
-                        # Transcribe
+                        # Transcribe audio
                         text = transcribe_audio(audio_file)
                         st.write("Yazıya dönüştürülen metin:")
                         st.write(text)
@@ -153,9 +121,12 @@ def main():
                         st.info("Webhook'a veri gönderiliyor...")
                         webhook_message = send_to_webhook(webhook_url, text)
                         st.write(webhook_message)
-                
+                        
+                        # Reset audio bytes
+                        st.session_state.audio_bytes = None
                 st.experimental_rerun()
     
+    # Show recording status
     if st.session_state.recording:
         st.write("🔴 Kayıt yapılıyor...")
         st.write("Kaydı durdurmak için 'Kayıt Durdur' butonuna basın.")
