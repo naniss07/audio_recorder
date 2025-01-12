@@ -28,9 +28,12 @@ class SesKaydedici:
         self.seconds = seconds
         self.samplerate = samplerate
 
-        # Kaydı başlatıyoruz
-        self.ses_parcalari = sd.rec(int(self.seconds * self.samplerate), samplerate=self.samplerate, channels=1, dtype='int16')
-        sd.wait()  # Kaydın bitmesini bekler
+        try:
+            # Kaydı başlatıyoruz
+            self.ses_parcalari = sd.rec(int(self.seconds * self.samplerate), samplerate=self.samplerate, channels=1, dtype='int16')
+            sd.wait()  # Kaydın bitmesini bekler
+        except Exception as e:
+            raise Exception("Mikrofon bulunamadı veya erişilemedi: " + str(e))
 
     def kayit_durdur(self):
         """Kaydı durdur ve döndür"""
@@ -85,10 +88,13 @@ def main():
     with col1:
         if not st.session_state.kayit_durumu:
             if st.button("Kayıt Başlat"):
-                st.session_state.kayit_durumu = True
-                with st.spinner("Kaydınız başlıyor..."):
-                    st.session_state.kaydedici.kayit_baslat()
-                    st.success("Kayıt başladı!")
+                try:
+                    st.session_state.kayit_durumu = True
+                    with st.spinner("Kaydınız başlıyor..."):
+                        st.session_state.kaydedici.kayit_baslat()
+                        st.success("Kayıt başladı!")
+                except Exception as e:
+                    st.error(f"Hata: {str(e)}")
 
     with col2:
         if st.session_state.kayit_durumu:
