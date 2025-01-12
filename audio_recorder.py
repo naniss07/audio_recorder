@@ -1,9 +1,11 @@
 import streamlit as st
+import sounddevice as sd
+import scipy.io.wavfile as wav
 from datetime import datetime
 import os
-import requests
-from audio_recorder_streamlit import audio_recorder
 import speech_recognition as sr
+import requests
+import threading
 
 def klasor_olustur():
     """Gerekli klasörleri oluştur (eğer yoksa)"""
@@ -12,12 +14,29 @@ def klasor_olustur():
     if not os.path.exists("transcripts"):
         os.makedirs("transcripts")
 
-def ses_kaydet_dosyaya(ses_parcalari):
+class SesKaydedici:
+    def __init__(self):
+        self.kayit_devam = False
+        self.ses_parcalari = []
+        self.fs = 44100  # Örnekleme hızı
+
+    def kayit_baslat(self, sure=10):  # saniye olarak kayıt süresi
+        self.kayit_devam = True
+        self.ses_parcalari = []
+
+        # Ses kaydını başlat
+        self.ses_parcalari = sd.rec(int(self.fs * sure), samplerate=self.fs, channels=1, dtype='int16')
+        sd.wait()  # Kayıt bitene kadar bekler
+
+    def kayit_durdur(self):
+        self.kayit_devam = False
+        return self.ses_parcalari, self.fs
+
+def ses_kaydet_dosyaya(ses_parcalari, ornek_hizi):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"recordings/recording_{zaman_damgasi}.wav"
 
-    with open(dosya_adi, "wb") as f:
-        f.write(ses_parcalari)
+    wav.write(dosya_adi, ornek_hizi, ses_parcalari)
     return dosya_adi
 
 def sesi_yaziya_cevir(ses_dosyasi):
@@ -78,6 +97,8 @@ def main():
             if st.button("Kayıt Başlat"):
                 st.session_state.kayit_durumu = True
                 st.session_state.audio_bytes = None
+                sure = st.number_input("Kayıt Süresi (saniye)", min_value=1, max_value=60, value=10)
+                st.session_state.kaydedici.kayit_baslat(sure)
                 st.success("Kayıt başladı!")
 
     with col2:
@@ -86,11 +107,11 @@ def main():
                 st.session_state.kayit_durumu = False
                 with st.spinner("Kayıt durduruluyor ve işleniyor..."):
                     # Kayıt durdurulduğunda ses kaydını al ve işleme başla
-                    ses_parcalari = st.session_state.audio_bytes
-                    
+                    ses_parcalari, ornek_hizi = st.session_state.kaydedici.kayit_durdur()
+
                     if ses_parcalari:
                         # Sesi dosyaya kaydet
-                        ses_dosyasi = ses_kaydet_dosyaya(ses_parcalari)
+                        ses_dosyasi = ses_kaydet_dosyaya(ses_parcalari, ornek_hizi)
                         st.success(f"Ses kaydedildi: {ses_dosyasi}")
 
                         # Sesi yazıya çevir
@@ -107,11 +128,9 @@ def main():
                         webhook_mesaji = metni_webhooka_gonder(webhook_url, metin)
                         st.write(webhook_mesaji)
 
-    # Ses kaydı sadece "Kayıt Başlat" butonuna basıldığında yapılacak
+    # Ses kaydını başlatan ve durduran fonksiyon
     if st.session_state.kayit_durumu:
-        audio_bytes = audio_recorder(key="audio_recorder")
-        if audio_bytes:
-            st.session_state.audio_bytes = audio_bytes
+        st.session_state.kaydedici = SesKaydedici()
 
 if __name__ == "__main__":
     main()
