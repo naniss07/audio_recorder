@@ -3,5 +3,6 @@ speechrecognition==3.8.1
 requests==2.26.0
 sounddevice==0.4.4
 protobuf==3.20.3
-setuptools==<desired_version>
+setuptools==64.0.0
+
 
