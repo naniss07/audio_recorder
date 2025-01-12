@@ -1,13 +1,11 @@
-from collections.abc import Iterable
 import streamlit as st
-import numpy as np
+import pyaudio
 import wave
 import speech_recognition as sr
 from datetime import datetime
 import os
 import threading
 import requests
-import sounddevice as sd
 
 def klasor_olustur():
     """Gerekli klasörleri oluştur (eğer yoksa)"""
@@ -20,23 +18,44 @@ class SesKaydedici:
     def __init__(self):
         self.kayit_devam = False
         self.ses_parcalari = []
-        self.samplerate = 44100  # Default örnek hızı
-        self.chunk = 1024  # Veri bloğu boyutu
+        self.p = None
+        self.stream = None
 
-    def kayit_baslat(self, seconds=5):
+    def kayit_baslat(self, chunk=1024, ornek_format=pyaudio.paInt16, kanal=1, ornek_hizi=44100):
         self.kayit_devam = True
         self.ses_parcalari = []
 
-        def kayit_dongusu(indata, frames, time, status):
-            if self.kayit_devam:
-                self.ses_parcalari.append(indata.copy())
+        self.p = pyaudio.PyAudio()
+        varsayilan_mikrofon = self.p.get_default_input_device_info()
+        st.write(f"Kullanılan mikrofon: {varsayilan_mikrofon['name']}")
 
-        with sd.InputStream(callback=kayit_dongusu, channels=1, samplerate=self.samplerate):
-            sd.sleep(seconds * 1000)
+        self.stream = self.p.open(format=ornek_format,
+                                channels=kanal,
+                                rate=ornek_hizi,
+                                frames_per_buffer=chunk,
+                                input=True)
+
+        def kayit_dongusu():
+            while self.kayit_devam:
+                veri = self.stream.read(chunk)
+                self.ses_parcalari.append(veri)
+
+        self.kayit_thread = threading.Thread(target=kayit_dongusu)
+        self.kayit_thread.start()
 
     def kayit_durdur(self):
         self.kayit_devam = False
-        return np.concatenate(self.ses_parcalari), self.samplerate
+        if self.kayit_thread:
+            self.kayit_thread.join()
+
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+
+        if self.p:
+            self.p.terminate()
+
+        return self.ses_parcalari, 44100  # Default örnek hızı
 
 def ses_kaydet_dosyaya(ses_parcalari, ornek_hizi):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
