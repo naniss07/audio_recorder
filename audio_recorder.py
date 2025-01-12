@@ -1,12 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for
-import sounddevice as sd
-from scipy.io.wavfile import write
-import os
-import requests
-from datetime import datetime
+import streamlit as st
+import pyaudio
+import wave
 import speech_recognition as sr
-
-app = Flask(__name__)
+from datetime import datetime
+import os
+import threading
+import requests
 
 def klasor_olustur():
     """Gerekli klasörleri oluştur (eğer yoksa)"""
@@ -19,32 +18,59 @@ class SesKaydedici:
     def __init__(self):
         self.kayit_devam = False
         self.ses_parcalari = []
+        self.p = None
+        self.stream = None
 
-    def kayit_baslat(self, seconds=5, samplerate=44100):
-        """Kaydı başlat ve ses kaydını depola"""
+    def kayit_baslat(self, chunk=1024, ornek_format=pyaudio.paInt16, kanal=1, ornek_hizi=44100):
         self.kayit_devam = True
         self.ses_parcalari = []
-        self.seconds = seconds
-        self.samplerate = samplerate
 
-        try:
-            # Kaydı başlatıyoruz
-            self.ses_parcalari = sd.rec(int(self.seconds * self.samplerate), samplerate=self.samplerate, channels=1, dtype='int16')
-            sd.wait()  # Kaydın bitmesini bekler
-        except Exception as e:
-            raise Exception("Mikrofon bulunamadı veya erişilemedi: " + str(e))
+        self.p = pyaudio.PyAudio()
+        varsayilan_mikrofon = self.p.get_default_input_device_info()
+        st.write(f"Kullanılan mikrofon: {varsayilan_mikrofon['name']}")
+
+        self.stream = self.p.open(format=ornek_format,
+                                channels=kanal,
+                                rate=ornek_hizi,
+                                frames_per_buffer=chunk,
+                                input=True)
+
+        def kayit_dongusu():
+            while self.kayit_devam:
+                veri = self.stream.read(chunk)
+                self.ses_parcalari.append(veri)
+
+        self.kayit_thread = threading.Thread(target=kayit_dongusu)
+        self.kayit_thread.start()
 
     def kayit_durdur(self):
-        """Kaydı durdur ve döndür"""
-        return self.ses_parcalari, self.samplerate
+        self.kayit_devam = False
+        if self.kayit_thread:
+            self.kayit_thread.join()
 
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+
+        if self.p:
+            self.p.terminate()
+
+        return self.ses_parcalari, 44100  # Default örnek hızı
 
 def ses_kaydet_dosyaya(ses_parcalari, ornek_hizi):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"recordings/recording_{zaman_damgasi}.wav"
-    write(dosya_adi, ornek_hizi, ses_parcalari)
-    return dosya_adi
 
+    p = pyaudio.PyAudio()
+    wf = wave.open(dosya_adi, 'wb')
+    wf.setnchannels(1)
+    wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+    wf.setframerate(ornek_hizi)
+    wf.writeframes(b''.join(ses_parcalari))
+    wf.close()
+    p.terminate()
+
+    return dosya_adi
 
 def sesi_yaziya_cevir(ses_dosyasi):
     taniyici = sr.Recognizer()
@@ -60,7 +86,6 @@ def sesi_yaziya_cevir(ses_dosyasi):
     except Exception as e:
         return f"Hata oluştu: {str(e)}"
 
-
 def metni_kaydet(metin):
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"transcripts/transcript_{zaman_damgasi}.txt"
@@ -69,8 +94,8 @@ def metni_kaydet(metin):
         f.write(metin)
     return dosya_adi
 
-
 def metni_webhooka_gonder(webhook_url, metin):
+    """Webhook'a metni gönder"""
     try:
         response = requests.post(webhook_url, json={"transcript": metin})
         if response.status_code == 200:
@@ -80,36 +105,57 @@ def metni_webhooka_gonder(webhook_url, metin):
     except Exception as e:
         return f"Webhook gönderimi sırasında bir hata oluştu: {str(e)}"
 
+def main():
+    st.title("Ses Kaydedici ve Yazıya Dönüştürücü")
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        webhook_url = request.form.get("webhook_url")
-        seconds = int(request.form.get("duration"))
+    klasor_olustur()
 
-        kaydedici = SesKaydedici()
-        kaydedici.kayit_baslat(seconds=seconds)
-        ses_parcalari, ornek_hizi = kaydedici.kayit_durdur()
+    if 'kaydedici' not in st.session_state:
+        st.session_state.kaydedici = SesKaydedici()
+        st.session_state.kayit_durumu = False
 
-        # Sesi dosyaya kaydet
-        ses_dosyasi = ses_kaydet_dosyaya(ses_parcalari, ornek_hizi)
+    # Kullanıcıdan Webhook URL'si alın
+    st.sidebar.title("Ayarlar")
+    webhook_url = st.sidebar.text_input("Webhook URL'si", placeholder="Webhook URL giriniz")
 
-        # Sesi yazıya çevir
-        metin = sesi_yaziya_cevir(ses_dosyasi)
+    # Webhook URL'sinin girilip girilmediğini kontrol edin
+    if not webhook_url:
+        st.warning("Lütfen önce geçerli bir Webhook URL'si girin!")
+        return
 
-        # Metni kaydet
-        metin_dosyasi = metni_kaydet(metin)
+    col1, col2 = st.columns(2)
 
-        # Webhook'a gönder
-        if webhook_url:
-            webhook_mesaji = metni_webhooka_gonder(webhook_url, metin)
-        else:
-            webhook_mesaji = "Webhook URL girilmemiş!"
+    with col1:
+        if not st.session_state.kayit_durumu:
+            if st.button("Kayıt Başlat"):
+                st.session_state.kayit_durumu = True
+                st.session_state.kaydedici.kayit_baslat()
+                st.success("Kayıt başladı!")
 
-        return render_template("index.html", ses_dosyasi=ses_dosyasi, metin=metin, metin_dosyasi=metin_dosyasi, webhook_mesaji=webhook_mesaji)
+    with col2:
+        if st.session_state.kayit_durumu:
+            if st.button("Kayıt Durdur"):
+                st.session_state.kayit_durumu = False
+                with st.spinner("Kayıt durduruluyor ve işleniyor..."):
+                    ses_parcalari, ornek_hizi = st.session_state.kaydedici.kayit_durdur()
 
-    return render_template("index.html", ses_dosyasi=None, metin=None, metin_dosyasi=None, webhook_mesaji=None)
+                    # Sesi dosyaya kaydet
+                    ses_dosyasi = ses_kaydet_dosyaya(ses_parcalari, ornek_hizi)
+                    st.success(f"Ses kaydedildi: {ses_dosyasi}")
 
+                    # Sesi yazıya çevir
+                    metin = sesi_yaziya_cevir(ses_dosyasi)
+                    st.write("Yazıya dönüştürülen metin:")
+                    st.write(metin)
+
+                    # Metni dosyaya kaydet
+                    metin_dosyasi = metni_kaydet(metin)
+                    st.success(f"Yazıya dönüştürüldü ve kaydedildi: {metin_dosyasi}")
+
+                    # Metni webhook'a gönder
+                    st.info("Webhook'a veri gönderiliyor...")
+                    webhook_mesaji = metni_webhooka_gonder(webhook_url, metin)
+                    st.write(webhook_mesaji)
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5002)
+    main()
