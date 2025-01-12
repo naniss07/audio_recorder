@@ -90,6 +90,7 @@ def main():
             if st.button("Kayıt Başlat", type="primary"):
                 st.session_state.recording = True
                 st.session_state.audio_bytes = None  # Reset previous recordings
+                st.session_state.recording_status = "Kayıt başladı. Ses kaydediliyor..."
     
     with col2:
         # Show Stop button only if recording
@@ -118,7 +119,8 @@ def main():
                         
                         # Reset audio bytes
                         st.session_state.audio_bytes = None
-
+                        st.session_state.recording_status = "Kaydetme tamamlandı."
+    
     # Hidden audio recorder only starts recording when the user presses "Kayıt Başlat"
     if st.session_state.recording:
         audio_bytes = audio_recorder(key="hidden_recorder")
@@ -128,7 +130,9 @@ def main():
     # Show recording status
     if st.session_state.recording:
         st.write("🔴 Kayıt yapılıyor...")
-        st.write("Kaydı durdurmak için 'Kayıt Durdur' butonuna basın.")
+        st.write(st.session_state.recording_status)
+    elif not st.session_state.recording and st.session_state.audio_bytes is not None:
+        st.write("🔵 Kayıt durdu. Kaydedilen veriler işleniyor...")
     else:
         st.write("🔵 Kayıt durduruldu.")
 
