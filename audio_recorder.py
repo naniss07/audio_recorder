@@ -95,7 +95,6 @@ def main():
         if not st.session_state.recording:
             if st.button("Kayıt Başlat", type="primary"):
                 st.session_state.recording = True
-                st.experimental_rerun()
     
     with col2:
         # Show Stop button only if recording
@@ -124,7 +123,6 @@ def main():
                         
                         # Reset audio bytes
                         st.session_state.audio_bytes = None
-                st.experimental_rerun()
     
     # Show recording status
     if st.session_state.recording:
