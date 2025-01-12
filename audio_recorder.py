@@ -54,10 +54,10 @@ def send_to_webhook(webhook_url, text):
     """Send text to webhook"""
     try:
         response = requests.post(webhook_url, json={"transcript": text})
-        if response.status_code == 200:
-            return "Veri başarılı bir şekilde webhook'a gönderildi!"
-        else:
-            return f"Webhook isteği başarısız: {response.status_code} - {response.text}"
+        response.raise_for_status()  # Raise HTTPError for bad responses
+        return "Veri başarılı bir şekilde webhook'a gönderildi!"
+    except requests.exceptions.HTTPError as http_err:
+        return f"HTTP hatası oluştu: {http_err}"
     except Exception as e:
         return f"Webhook gönderimi sırasında bir hata oluştu: {str(e)}"
 
@@ -81,12 +81,6 @@ def main():
         st.warning("Lütfen önce geçerli bir Webhook URL'si girin!")
         return
     
-    # Hidden audio recorder
-    if st.session_state.recording:
-        audio_bytes = audio_recorder(key="hidden_recorder")
-        if audio_bytes:
-            st.session_state.audio_bytes = audio_bytes
-    
     # Create two columns for buttons
     col1, col2 = st.columns(2)
     
@@ -95,6 +89,7 @@ def main():
         if not st.session_state.recording:
             if st.button("Kayıt Başlat", type="primary"):
                 st.session_state.recording = True
+                st.session_state.audio_bytes = None  # Reset previous recordings
     
     with col2:
         # Show Stop button only if recording
@@ -123,11 +118,19 @@ def main():
                         
                         # Reset audio bytes
                         st.session_state.audio_bytes = None
+
+    # Hidden audio recorder only starts recording when the user presses "Kayıt Başlat"
+    if st.session_state.recording:
+        audio_bytes = audio_recorder(key="hidden_recorder")
+        if audio_bytes:
+            st.session_state.audio_bytes = audio_bytes
     
     # Show recording status
     if st.session_state.recording:
         st.write("🔴 Kayıt yapılıyor...")
         st.write("Kaydı durdurmak için 'Kayıt Durdur' butonuna basın.")
+    else:
+        st.write("🔵 Kayıt durduruldu.")
 
 if __name__ == "__main__":
     main()
