@@ -1,5 +1,6 @@
 import streamlit as st
 import pyaudio
+import numpy as np
 import wave
 import speech_recognition as sr
 from datetime import datetime
